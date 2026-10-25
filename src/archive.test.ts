@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, importFiles, type Conversation } from './archive';
 
 const providerFile = (name = 'chatgpt-export.json') => new File([
@@ -8,6 +8,9 @@ const providerFile = (name = 'chatgpt-export.json') => new File([
 
 beforeEach(async () => {
   await db.conversations.clear();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('account-aware import identity', () => {
@@ -31,6 +34,37 @@ describe('account-aware import identity', () => {
     expect(again.imported).toBe(0);
     expect(again.updated).toBe(1);
     expect(await db.conversations.count()).toBe(1);
+  });
+});
+
+describe('source ID edge cases', () => {
+  it('characterizes the missing-ID fallback collision across same-provider account exports', async () => {
+    const first = new File([JSON.stringify({ conversations: [{ title: 'First export', messages: [{ role: 'user', content: 'First content' }] }] })], 'chatgpt-first.json', { type: 'application/json' });
+    const second = new File([JSON.stringify({ conversations: [{ title: 'Second export', messages: [{ role: 'user', content: 'Second content' }] }] })], 'chatgpt-second.json', { type: 'application/json' });
+
+    const summary = await importFiles([first, second], { accountLabel: 'Personal' });
+    const rows = await db.conversations.toArray();
+
+    // Both inputs use import-0, so the second currently overwrites the first.
+    expect(summary).toMatchObject({ imported: 1, updated: 1, skipped: 0 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceId).toBe('import-0');
+    expect(rows[0].title).toBe('Second export');
+  });
+
+  it('updates one record when an export repeats an explicit source ID', async () => {
+    const duplicateIds = new File([JSON.stringify({ conversations: [
+      { id: 'reused-id', title: 'Older copy', messages: [{ role: 'assistant', content: 'Old text' }] },
+      { id: 'reused-id', title: 'Newer copy', messages: [{ role: 'assistant', content: 'New text' }] },
+    ] })], 'chatgpt-duplicate-ids.json', { type: 'application/json' });
+
+    const summary = await importFiles([duplicateIds]);
+    const rows = await db.conversations.toArray();
+
+    expect(summary).toMatchObject({ imported: 1, updated: 1, skipped: 0 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sourceId: 'reused-id', title: 'Newer copy' });
+    expect(rows[0].messages[0].content).toBe('New text');
   });
 });
 
@@ -88,6 +122,27 @@ describe('malformed export handling', () => {
       expect.stringContaining('skipped unsupported or empty conversation 2'),
       expect.stringContaining('invalid JSON'),
     ]));
+  });
+});
+
+describe('IndexedDB batch rollback', () => {
+  it('rolls back earlier writes and resets counts when a later transaction read fails', async () => {
+    const batch = new File([JSON.stringify({ conversations: [
+      { id: 'first', title: 'First', messages: [{ role: 'user', content: 'This write should roll back.' }] },
+      { id: 'second', title: 'Second', messages: [{ role: 'user', content: 'This read will fail.' }] },
+    ] })], 'chatgpt-batch.json', { type: 'application/json' });
+    const originalGet = db.conversations.get.bind(db.conversations);
+    vi.spyOn(db.conversations, 'get').mockImplementation((async (id: string) => {
+      if (id === 'chatgpt:second') throw new Error('simulated IndexedDB read failure');
+      return originalGet(id);
+    }) as any);
+
+    const summary = await importFiles([batch]);
+
+    expect(summary).toMatchObject({ imported: 0, updated: 0, skipped: 1 });
+    expect(summary.warnings.join(' ')).toContain('Could not save imported conversations to the local archive');
+    expect(summary.warnings.join(' ')).toContain('simulated IndexedDB read failure');
+    expect(await db.conversations.count()).toBe(0);
   });
 });
 
