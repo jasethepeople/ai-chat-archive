@@ -76,6 +76,45 @@ jobs:
         shell: bash
         run: npm run desktop:build -- ${{ matrix.tauri-args }}
 
+      - name: Verify expected installer formats
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_root="src-tauri/target"
+
+          require_bundle() {
+            local label="$1"
+            local file_type="$2"
+            local pattern="$3"
+            local match
+            match=$(find "$target_root" -type "$file_type" -path "$pattern" -print -quit)
+            if [[ -z "$match" ]]; then
+              echo "::error::Missing expected $label bundle matching $pattern"
+              exit 1
+            fi
+            echo "Verified $label: $match"
+          }
+
+          case "$RUNNER_OS" in
+            Windows)
+              require_bundle "Windows MSI" f '*/release/bundle/msi/*.msi'
+              require_bundle "Windows NSIS setup EXE" f '*/release/bundle/nsis/*-setup.exe'
+              ;;
+            macOS)
+              require_bundle "macOS DMG" f '*/release/bundle/dmg/*.dmg'
+              require_bundle "macOS app bundle" d '*/release/bundle/macos/*.app'
+              ;;
+            Linux)
+              require_bundle "Linux DEB" f '*/release/bundle/deb/*.deb'
+              require_bundle "Linux RPM" f '*/release/bundle/rpm/*.rpm'
+              require_bundle "Linux AppImage" f '*/release/bundle/appimage/*.AppImage'
+              ;;
+            *)
+              echo "::error::Unsupported runner OS: $RUNNER_OS"
+              exit 1
+              ;;
+          esac
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
