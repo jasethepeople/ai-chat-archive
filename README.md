@@ -28,6 +28,12 @@ The app requires a compatible WebKitGTK 4.1 runtime on Linux. If a package manag
 
 Echoes keeps its archive in local app/browser storage and does not sync it to an account or cloud. Use **Backup** or **Export archive** regularly and store the JSON backup somewhere safe. Clearing app data or removing the application can put local conversations at risk. Automatic sync and encrypted backups are not implemented yet.
 
+## Import and restore conversations
+
+Choose **Import archive** or **Choose export file**, then select one or more provider JSON or ZIP exports. In the import dialog, enter an optional **Account label** such as `Personal`, `Work`, or a client name. The label applies to all provider conversations in the selected files. Use the same label when re-importing the same account's export so matching conversations update in place; use different labels to keep same-provider IDs from separate accounts distinct. Leave it blank if you do not need account separation. Labels are user-entered names and are not verified against provider accounts.
+
+To create a backup, choose **Backup** or **Export archive** and save the downloaded `conversation-vault-backup.json` file somewhere safe. To restore or merge it, choose **Import archive** and select that JSON file. Echoes recognizes its own backup format and preserves saved conversation IDs, providers, account labels, messages, and metadata. Re-importing the same backup updates matching conversations instead of duplicating them. If you enter an account label while importing an Echoes backup, the saved labels in the backup take precedence. Importing a backup merges its conversations into the current archive; it does not delete conversations that are absent from the backup.
+
 ## Run locally
 
 ```bash
