@@ -69,6 +69,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Run import regression tests
+        run: npm test
+
       - name: Build Tauri bundles
         shell: bash
         run: npm run desktop:build -- ${{ matrix.tauri-args }}

@@ -37,6 +37,8 @@ npm run dev
 
 Open the local Vite URL in a modern browser. Build a static production bundle with `npm run build`.
 
+Run the importer regression tests with `npm test`.
+
 ## Desktop app (Tauri 2)
 
 Install the Rust toolchain and the operating-system prerequisites in the [Tauri v2 prerequisites guide](https://v2.tauri.app/start/prerequisites/), then run:
@@ -55,9 +57,11 @@ The workflow in `.github/workflows/build-installers.yml` runs on every push and 
 ## MVP features
 
 - Import JSON and ZIP exports; ChatGPT's `conversations.json` mapping format is handled along with generic JSON arrays/objects containing `conversations`, `chats`, `threads`, `history`, or message arrays.
-- Local IndexedDB storage, stable provider/source IDs, and repeat-import upserts.
-- Search across titles, providers, and message text; filter by provider.
+- Optional account labels on provider-export imports, with account-aware IDs so same-provider conversations from different accounts remain separate.
+- Local IndexedDB storage, stable provider/source/account IDs, and repeat-import upserts.
+- Search across titles, providers, account labels, and message text; filter by provider or account.
 - Conversation reader and per-conversation Markdown export; full archive JSON backup/export.
+- Echoes JSON backups can be re-imported while retaining original IDs, providers, account labels, metadata, and messages.
 - Delete a conversation from the local archive.
 - ZIP entry count/size checks, CRC validation, path traversal guard, and no extraction to disk.
 

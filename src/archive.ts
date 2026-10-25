@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 
 export type Platform = 'chatgpt' | 'claude' | 'gemini' | 'perplexity' | 'grok' | 'copilot' | 'other';
 export interface Message { id: string; role: string; content: string; createdAt: string | null; metadata?: Record<string, unknown> }
-export interface Conversation { id: string; platform: Platform; sourceId: string; title: string; createdAt: string | null; updatedAt: string | null; messages: Message[]; metadata?: Record<string, unknown>; importedAt: string }
+export interface Conversation { id: string; platform: Platform; sourceId: string; accountLabel?: string | null; title: string; createdAt: string | null; updatedAt: string | null; messages: Message[]; metadata?: Record<string, unknown>; importedAt: string }
 
 class VaultDB extends Dexie {
   conversations!: Table<Conversation, string>;
@@ -34,9 +34,11 @@ const platformFrom = (name: string): Platform => {
   const s = name.toLowerCase();
   return (['chatgpt','claude','gemini','perplexity','grok','copilot'] as Platform[]).find(p => s.includes(p)) ?? 'other';
 };
-const makeId = (platform: string, source: string) => `${platform}:${source}`;
+const makeId = (platform: string, source: string, accountLabel?: string | null) => accountLabel
+  ? `account:${encodeURIComponent(platform)}:${encodeURIComponent(accountLabel)}:${encodeURIComponent(source)}`
+  : `${platform}:${source}`;
 
-function parseConversation(raw: any, platform: Platform, index: number): Conversation | null {
+function parseConversation(raw: any, platform: Platform, index: number, accountLabel?: string | null): Conversation | null {
   if (!raw || typeof raw !== 'object') return null;
   const sourceId = str(raw.id || raw.conversation_id || raw.uuid || raw.chat_id || `import-${index}`);
   const title = str(raw.title || raw.name || raw.subject || 'Untitled conversation') || 'Untitled conversation';
@@ -59,7 +61,8 @@ function parseConversation(raw: any, platform: Platform, index: number): Convers
   if (!messages.length && !raw.mapping && !Array.isArray(raw.messages)) return null;
   const createdAt = iso(raw.create_time || raw.created_at || raw.createdAt);
   const updatedAt = iso(raw.update_time || raw.updated_at || raw.updatedAt) || createdAt;
-  return { id: makeId(platform, sourceId), platform, sourceId, title, createdAt, updatedAt, messages, metadata: { sourceFormat: raw.mapping ? 'chatgpt-mapping' : 'generic-json' }, importedAt: new Date().toISOString() };
+  const normalizedAccount = accountLabel?.trim() || null;
+  return { id: makeId(platform, sourceId, normalizedAccount), platform, sourceId, accountLabel: normalizedAccount, title, createdAt, updatedAt, messages, metadata: { sourceFormat: raw.mapping ? 'chatgpt-mapping' : 'generic-json' }, importedAt: new Date().toISOString() };
 }
 
 function extractConversations(json: any): any[] {
@@ -69,11 +72,37 @@ function extractConversations(json: any): any[] {
   if (json.mapping || json.messages || json.chat_messages || json.turns) return [json];
   return [];
 }
+const validPlatforms: Platform[] = ['chatgpt','claude','gemini','perplexity','grok','copilot','other'];
+function parseBackupConversation(raw: any): Conversation | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || typeof raw.sourceId !== 'string' || !Array.isArray(raw.messages)) return null;
+  if (!validPlatforms.includes(raw.platform)) return null;
+  const messages: Message[] = raw.messages.map((m: any, i: number) => ({
+    id: str(m?.id) || `${raw.sourceId}-${i}`,
+    role: str(m?.role) || 'unknown',
+    content: str(m?.content),
+    createdAt: typeof m?.createdAt === 'string' ? m.createdAt : null,
+    metadata: m?.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata) ? m.metadata : undefined,
+  }));
+  return {
+    id: raw.id,
+    platform: raw.platform,
+    sourceId: raw.sourceId,
+    accountLabel: typeof raw.accountLabel === 'string' && raw.accountLabel.trim() ? raw.accountLabel : null,
+    title: str(raw.title) || 'Untitled conversation',
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null,
+    messages,
+    metadata: raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata) ? raw.metadata : undefined,
+    importedAt: str(raw.importedAt) || new Date().toISOString(),
+  };
+}
 export interface ImportSummary { imported: number; updated: number; skipped: number; warnings: string[] }
-export async function importFiles(files: File[]): Promise<ImportSummary> {
+export interface ImportOptions { accountLabel?: string | null }
+export async function importFiles(files: File[], options: ImportOptions = {}): Promise<ImportSummary> {
   const parsed: Conversation[] = [];
   const warnings: string[] = [];
   let skipped = 0;
+  const accountLabel = options.accountLabel?.trim() || null;
   for (const file of files) {
     try {
       let candidates: {name:string; text:string}[] = [];
@@ -95,9 +124,23 @@ export async function importFiles(files: File[]): Promise<ImportSummary> {
       for (const candidate of candidates) {
         let data: any;
         try { data = JSON.parse(candidate.text); } catch { warnings.push(`${candidate.name}: invalid JSON.`); continue; }
+        if (data?.format === 'conversation-vault') {
+          if (data.version !== 1 || !Array.isArray(data.conversations)) {
+            warnings.push(`${candidate.name}: unsupported Echoes backup version or structure.`);
+            continue;
+          }
+          if (accountLabel) warnings.push(`${candidate.name}: the supplied account label was ignored; labels saved in the Echoes backup were preserved.`);
+          let restored = 0;
+          for (const item of data.conversations) {
+            const conversation = parseBackupConversation(item);
+            if (conversation) { parsed.push(conversation); found++; restored++; }
+          }
+          if (!restored) warnings.push(`${candidate.name}: no valid conversations found in the Echoes backup.`);
+          continue;
+        }
         const platform = platformFrom(`${file.name} ${candidate.name}`);
         const items = extractConversations(data);
-        items.forEach((item, i) => { const sourcePlatform = item?.mapping ? 'chatgpt' : platform; const conversation = parseConversation(item, sourcePlatform, i); if (conversation) { parsed.push(conversation); found++; } });
+        items.forEach((item, i) => { const sourcePlatform = item?.mapping ? 'chatgpt' : platform; const conversation = parseConversation(item, sourcePlatform, i, accountLabel); if (conversation) { parsed.push(conversation); found++; } });
       }
       if (!found) { warnings.push(`${file.name}: no supported conversations found.`); skipped++; }
     } catch (error) { warnings.push(`${file.name}: ${error instanceof Error ? error.message : 'could not read file'}`); skipped++; }
@@ -116,7 +159,8 @@ export async function exportJSON(conversations: Conversation[]) {
   download(new Blob([JSON.stringify({format:'conversation-vault', version:1, exportedAt:new Date().toISOString(), conversations}, null, 2)], {type:'application/json'}), 'conversation-vault-backup.json');
 }
 export async function exportMarkdown(c: Conversation) {
-  const body = [`# ${c.title}`, ``, `Source: ${c.platform} · ${c.messages.length} messages`, ``, ...c.messages.flatMap(m => [`## ${m.role}${m.createdAt ? ` · ${new Date(m.createdAt).toLocaleString()}` : ''}`, ``, m.content || '*(No text content)*', ``])].join('\n');
+  const account = c.accountLabel ? ` · Account: ${c.accountLabel}` : '';
+  const body = [`# ${c.title}`, ``, `Source: ${c.platform}${account} · ${c.messages.length} messages`, ``, ...c.messages.flatMap(m => [`## ${m.role}${m.createdAt ? ` · ${new Date(m.createdAt).toLocaleString()}` : ''}`, ``, m.content || '*(No text content)*', ``])].join('\n');
   download(new Blob([body], {type:'text/markdown'}), `${safeName(c.title)}.md`);
 }
 function safeName(s: string) { return s.replace(/[^a-z0-9-_]+/gi,'-').replace(/^-|-$/g,'').slice(0,80) || 'conversation'; }
