@@ -34,6 +34,40 @@ describe('account-aware import identity', () => {
   });
 });
 
+describe('generic provider export formats', () => {
+  it('parses a DeepSeek-style history export with custom conversation and turn fields', async () => {
+    const deepseekExport = new File([JSON.stringify({
+      history: [{
+        chat_id: 'deepseek-chat-42',
+        name: 'Planning with DeepSeek',
+        create_time: 1735689600,
+        update_time: 1735693200,
+        turns: [
+          { uuid: 'turn-user', sender: 'user', text: 'Help me plan a launch.', timestamp: 1735689600 },
+          { uuid: 'turn-assistant', author: { role: 'assistant' }, message: { content: [{ text: 'Start with a clear launch checklist.' }] }, timestamp: 1735693200 },
+        ],
+      }],
+    })], 'deepseek-history-export.json', { type: 'application/json' });
+
+    const summary = await importFiles([deepseekExport], { accountLabel: 'Personal DeepSeek' });
+    const [conversation] = await db.conversations.toArray();
+
+    expect(summary).toMatchObject({ imported: 1, updated: 0, skipped: 0, warnings: [] });
+    expect(conversation).toMatchObject({
+      id: 'account:other:Personal%20DeepSeek:deepseek-chat-42',
+      platform: 'other',
+      sourceId: 'deepseek-chat-42',
+      accountLabel: 'Personal DeepSeek',
+      title: 'Planning with DeepSeek',
+      messages: [
+        { id: 'turn-user', role: 'user', content: 'Help me plan a launch.' },
+        { id: 'turn-assistant', role: 'assistant', content: 'Start with a clear launch checklist.' },
+      ],
+    });
+    expect(conversation.messages[0].createdAt).toBe('2025-01-01T00:00:00.000Z');
+  });
+});
+
 describe('Echoes backup restoration', () => {
   it('preserves original ids, provider, account label, metadata, and messages and is safe to reimport', async () => {
     const original: Conversation = {
