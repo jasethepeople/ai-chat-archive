@@ -58,7 +58,8 @@ The workflow in `.github/workflows/build-installers.yml` runs on every push and 
 
 - Import JSON and ZIP exports; ChatGPT's `conversations.json` mapping format is handled along with generic JSON arrays/objects containing `conversations`, `chats`, `threads`, `history`, or message arrays.
 - Optional account labels on provider-export imports, with account-aware IDs so same-provider conversations from different accounts remain separate.
-- Local IndexedDB storage, stable provider/source/account IDs, and repeat-import upserts.
+- Local IndexedDB storage, stable provider/source/account IDs, and repeat-import upserts; exports without provider IDs use deterministic content fingerprints to avoid position-based collisions.
+- Because content fingerprints cannot infer identity without a provider ID, changed content may be imported as a new conversation; identical content may resolve to the same ID.
 - Search across titles, providers, account labels, and message text; filter by provider or account.
 - Conversation reader and per-conversation Markdown export; full archive JSON backup/export.
 - Echoes JSON backups can be re-imported while retaining original IDs, providers, account labels, metadata, and messages.

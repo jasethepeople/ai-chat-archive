@@ -38,18 +38,22 @@ describe('account-aware import identity', () => {
 });
 
 describe('source ID edge cases', () => {
-  it('characterizes the missing-ID fallback collision across same-provider account exports', async () => {
+  it('derives stable, distinct IDs for separate imports without source IDs', async () => {
     const first = new File([JSON.stringify({ conversations: [{ title: 'First export', messages: [{ role: 'user', content: 'First content' }] }] })], 'chatgpt-first.json', { type: 'application/json' });
     const second = new File([JSON.stringify({ conversations: [{ title: 'Second export', messages: [{ role: 'user', content: 'Second content' }] }] })], 'chatgpt-second.json', { type: 'application/json' });
 
     const summary = await importFiles([first, second], { accountLabel: 'Personal' });
     const rows = await db.conversations.toArray();
 
-    // Both inputs use import-0, so the second currently overwrites the first.
-    expect(summary).toMatchObject({ imported: 1, updated: 1, skipped: 0 });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].sourceId).toBe('import-0');
-    expect(rows[0].title).toBe('Second export');
+    expect(summary).toMatchObject({ imported: 2, updated: 0, skipped: 0 });
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(row => row.sourceId)).size).toBe(2);
+    expect(rows.every(row => row.sourceId.startsWith('import-'))).toBe(true);
+    expect(rows.map(row => row.title).sort()).toEqual(['First export', 'Second export']);
+
+    const repeat = await importFiles([first, second], { accountLabel: 'Personal' });
+    expect(repeat).toMatchObject({ imported: 0, updated: 2, skipped: 0 });
+    expect(await db.conversations.count()).toBe(2);
   });
 
   it('updates one record when an export repeats an explicit source ID', async () => {

@@ -41,9 +41,27 @@ const makeId = (platform: string, source: string, accountLabel?: string | null) 
   ? `account:${encodeURIComponent(platform)}:${encodeURIComponent(accountLabel)}:${encodeURIComponent(source)}`
   : `${platform}:${source}`;
 
-function parseConversation(raw: any, platform: Platform, index: number, accountLabel?: string | null): Conversation | null {
+function stableSerialize(value: any): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(',')}}`;
+}
+function fallbackSourceId(raw: any): string {
+  const input = stableSerialize(raw);
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ (code + i), 0x01000193);
+  }
+  const fingerprint = `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`;
+  return `import-${fingerprint}`;
+}
+
+function parseConversation(raw: any, platform: Platform, accountLabel?: string | null): Conversation | null {
   if (!raw || typeof raw !== 'object') return null;
-  const sourceId = str(raw.id || raw.conversation_id || raw.uuid || raw.chat_id || `import-${index}`);
+  const sourceId = str(raw.id || raw.conversation_id || raw.uuid || raw.chat_id) || fallbackSourceId(raw);
   const title = str(raw.title || raw.name || raw.subject || 'Untitled conversation') || 'Untitled conversation';
   const messages: Message[] = [];
   if (raw.mapping && typeof raw.mapping === 'object' && !Array.isArray(raw.mapping)) {
@@ -158,7 +176,7 @@ export async function importFiles(files: File[], options: ImportOptions = {}): P
           try {
             const item = items[i];
             const sourcePlatform = item?.mapping ? 'chatgpt' : platform;
-            const conversation = parseConversation(item, sourcePlatform, i, accountLabel);
+            const conversation = parseConversation(item, sourcePlatform, accountLabel);
             if (conversation) { parsed.push(conversation); found++; }
             else warnings.push(`${candidate.name}: skipped unsupported or empty conversation ${i + 1}.`);
           } catch (error) { warnings.push(`${candidate.name}: conversation ${i + 1} could not be parsed (${errorText(error)}).`); }
