@@ -17,7 +17,10 @@ export const db = new VaultDB();
 const str = (v: unknown) => typeof v === 'string' ? v : '';
 const iso = (v: unknown): string | null => {
   if (typeof v === 'string' && v) return v;
-  if (typeof v === 'number' && Number.isFinite(v)) return new Date(v * 1000).toISOString();
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const date = new Date(v * 1000);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
   return null;
 };
 const textOf = (v: any): string => {
@@ -43,7 +46,7 @@ function parseConversation(raw: any, platform: Platform, index: number, accountL
   const sourceId = str(raw.id || raw.conversation_id || raw.uuid || raw.chat_id || `import-${index}`);
   const title = str(raw.title || raw.name || raw.subject || 'Untitled conversation') || 'Untitled conversation';
   const messages: Message[] = [];
-  if (raw.mapping && typeof raw.mapping === 'object') {
+  if (raw.mapping && typeof raw.mapping === 'object' && !Array.isArray(raw.mapping)) {
     const nodes = Object.entries(raw.mapping as Record<string, any>).map(([key, node]) => ({ key, node: node?.message })).filter(x => x.node && x.node.message);
     nodes.sort((a,b) => (Number(a.node.create_time)||0) - (Number(b.node.create_time)||0));
     for (const {key,node} of nodes) {
@@ -54,11 +57,12 @@ function parseConversation(raw: any, platform: Platform, index: number, accountL
   } else {
     const source = raw.messages || raw.chat_messages || raw.turns || raw.items || [];
     if (Array.isArray(source)) source.forEach((m: any, i: number) => {
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return;
       const content = textOf(m.content ?? m.text ?? m.message ?? m);
-      if (content || m.role || m.author) messages.push({ id: str(m.id || m.uuid) || `${sourceId}-${i}`, role: str(m.role || m.author?.role || m.sender || 'unknown'), content, createdAt: iso(m.created_at || m.create_time || m.timestamp), metadata: m.metadata && typeof m.metadata === 'object' ? m.metadata : undefined });
+      if (content || m.role || m.author) messages.push({ id: str(m.id || m.uuid) || `${sourceId}-${i}`, role: str(m.role || m.author?.role || m.sender || 'unknown'), content, createdAt: iso(m.created_at || m.create_time || m.timestamp), metadata: m.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata) ? m.metadata : undefined });
     });
   }
-  if (!messages.length && !raw.mapping && !Array.isArray(raw.messages)) return null;
+  if (!messages.length) return null;
   const createdAt = iso(raw.create_time || raw.created_at || raw.createdAt);
   const updatedAt = iso(raw.update_time || raw.updated_at || raw.updatedAt) || createdAt;
   const normalizedAccount = accountLabel?.trim() || null;
@@ -98,11 +102,12 @@ function parseBackupConversation(raw: any): Conversation | null {
 }
 export interface ImportSummary { imported: number; updated: number; skipped: number; warnings: string[] }
 export interface ImportOptions { accountLabel?: string | null }
+const errorText = (error: unknown) => error instanceof Error && error.message ? error.message : 'unknown error';
 export async function importFiles(files: File[], options: ImportOptions = {}): Promise<ImportSummary> {
   const parsed: Conversation[] = [];
   const warnings: string[] = [];
   let skipped = 0;
-  const accountLabel = options.accountLabel?.trim() || null;
+  const accountLabel = typeof options.accountLabel === 'string' ? options.accountLabel.trim() || null : null;
   for (const file of files) {
     try {
       let candidates: {name:string; text:string}[] = [];
@@ -111,19 +116,25 @@ export async function importFiles(files: File[], options: ImportOptions = {}): P
         const zip = await JSZip.loadAsync(file, { checkCRC32: true });
         const entries = Object.values(zip.files).filter(f => !f.dir && !f.name.startsWith('__MACOSX/') && /\.json$/i.test(f.name));
         if (entries.length > 1000) throw new Error('ZIP contains too many JSON files.');
+        if (!entries.length) { warnings.push(`${file.name}: ZIP contains no JSON files.`); skipped++; continue; }
         let total = 0;
         for (const entry of entries) {
           if (entry.name.split('/').includes('..')) { warnings.push(`Skipped unsafe path in ${file.name}`); continue; }
-          const blob = await entry.async('blob'); total += blob.size;
+          let blob: Blob;
+          try { blob = await entry.async('blob'); }
+          catch (error) { warnings.push(`${entry.name}: could not read ZIP entry (${errorText(error)}).`); continue; }
+          total += blob.size;
           if (blob.size > 60 * 1024 * 1024 || total > 250 * 1024 * 1024) throw new Error('Extracted JSON exceeds the safety limit.');
           candidates.push({name: entry.name, text: await blob.text()});
         }
       } else if (/\.json$/i.test(file.name)) candidates = [{name:file.name,text:await file.text()}];
       else { warnings.push(`${file.name}: choose a .json or .zip export.`); skipped++; continue; }
       let found = 0;
+      let decodedCandidates = 0;
       for (const candidate of candidates) {
         let data: any;
         try { data = JSON.parse(candidate.text); } catch { warnings.push(`${candidate.name}: invalid JSON.`); continue; }
+        decodedCandidates++;
         if (data?.format === 'conversation-vault') {
           if (data.version !== 1 || !Array.isArray(data.conversations)) {
             warnings.push(`${candidate.name}: unsupported Echoes backup version or structure.`);
@@ -131,28 +142,51 @@ export async function importFiles(files: File[], options: ImportOptions = {}): P
           }
           if (accountLabel) warnings.push(`${candidate.name}: the supplied account label was ignored; labels saved in the Echoes backup were preserved.`);
           let restored = 0;
-          for (const item of data.conversations) {
-            const conversation = parseBackupConversation(item);
-            if (conversation) { parsed.push(conversation); found++; restored++; }
+          for (let i = 0; i < data.conversations.length; i++) {
+            try {
+              const conversation = parseBackupConversation(data.conversations[i]);
+              if (conversation) { parsed.push(conversation); found++; restored++; }
+              else warnings.push(`${candidate.name}: skipped malformed backup conversation ${i + 1}.`);
+            } catch (error) { warnings.push(`${candidate.name}: backup conversation ${i + 1} could not be parsed (${errorText(error)}).`); }
           }
           if (!restored) warnings.push(`${candidate.name}: no valid conversations found in the Echoes backup.`);
           continue;
         }
         const platform = platformFrom(`${file.name} ${candidate.name}`);
         const items = extractConversations(data);
-        items.forEach((item, i) => { const sourcePlatform = item?.mapping ? 'chatgpt' : platform; const conversation = parseConversation(item, sourcePlatform, i, accountLabel); if (conversation) { parsed.push(conversation); found++; } });
+        for (let i = 0; i < items.length; i++) {
+          try {
+            const item = items[i];
+            const sourcePlatform = item?.mapping ? 'chatgpt' : platform;
+            const conversation = parseConversation(item, sourcePlatform, i, accountLabel);
+            if (conversation) { parsed.push(conversation); found++; }
+            else warnings.push(`${candidate.name}: skipped unsupported or empty conversation ${i + 1}.`);
+          } catch (error) { warnings.push(`${candidate.name}: conversation ${i + 1} could not be parsed (${errorText(error)}).`); }
+        }
       }
-      if (!found) { warnings.push(`${file.name}: no supported conversations found.`); skipped++; }
-    } catch (error) { warnings.push(`${file.name}: ${error instanceof Error ? error.message : 'could not read file'}`); skipped++; }
+      if (!found) {
+        if (decodedCandidates) warnings.push(`${file.name}: no supported conversations found.`);
+        skipped++;
+      }
+    } catch (error) { warnings.push(`${file.name}: ${errorText(error)}.`); skipped++; }
   }
   const result = { imported: 0, updated: 0, skipped, warnings };
-  await db.transaction('rw', db.conversations, async () => {
-    for (const conversation of parsed) {
-      const existing = await db.conversations.get(conversation.id);
-      if (existing) result.updated++; else result.imported++;
-      await db.conversations.put(conversation);
+  if (parsed.length) {
+    try {
+      await db.transaction('rw', db.conversations, async () => {
+        for (const conversation of parsed) {
+          const existing = await db.conversations.get(conversation.id);
+          if (existing) result.updated++; else result.imported++;
+          await db.conversations.put(conversation);
+        }
+      });
+    } catch (error) {
+      result.imported = 0;
+      result.updated = 0;
+      result.skipped++;
+      result.warnings.push(`Could not save imported conversations to the local archive (${errorText(error)}).`);
     }
-  });
+  }
   return result;
 }
 export async function exportJSON(conversations: Conversation[]) {

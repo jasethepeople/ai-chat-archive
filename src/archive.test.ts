@@ -68,6 +68,29 @@ describe('generic provider export formats', () => {
   });
 });
 
+describe('malformed export handling', () => {
+  it('skips a malformed record, retains valid siblings, and continues after invalid JSON files', async () => {
+    const mixedExport = new File([JSON.stringify({ conversations: [
+      { id: 'valid-before', title: 'Before', messages: [{ role: 'user', content: 'Keep this one.' }] },
+      { id: 'broken-record', title: 'Broken', messages: [null] },
+      { id: 'valid-after', title: 'After', create_time: 1e300, messages: [{ role: 'assistant', content: 'Keep this too.' }] },
+    ] })], 'chatgpt-export.json', { type: 'application/json' });
+    const invalidJson = new File(['{not valid JSON'], 'broken-export.json', { type: 'application/json' });
+
+    const summary = await importFiles([mixedExport, invalidJson]);
+    const rows = await db.conversations.toArray();
+
+    expect(summary.imported).toBe(2);
+    expect(summary.skipped).toBe(1);
+    expect(rows.map(row => row.sourceId).sort()).toEqual(['valid-after', 'valid-before']);
+    expect(rows.find(row => row.sourceId === 'valid-after')?.createdAt).toBeNull();
+    expect(summary.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('skipped unsupported or empty conversation 2'),
+      expect.stringContaining('invalid JSON'),
+    ]));
+  });
+});
+
 describe('Echoes backup restoration', () => {
   it('preserves original ids, provider, account label, metadata, and messages and is safe to reimport', async () => {
     const original: Conversation = {
