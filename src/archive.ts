@@ -65,19 +65,21 @@ function parseConversation(raw: any, platform: Platform, accountLabel?: string |
   const title = str(raw.title || raw.name || raw.subject || 'Untitled conversation') || 'Untitled conversation';
   const messages: Message[] = [];
   if (raw.mapping && typeof raw.mapping === 'object' && !Array.isArray(raw.mapping)) {
-    const nodes = Object.entries(raw.mapping as Record<string, any>).map(([key, node]) => ({ key, node: node?.message })).filter(x => x.node && x.node.message);
+    const nodes = Object.entries(raw.mapping as Record<string, any>).map(([key, node]) => ({ key, node: node?.message })).filter(x => x.node && typeof x.node === 'object');
     nodes.sort((a,b) => (Number(a.node.create_time)||0) - (Number(b.node.create_time)||0));
     for (const {key,node} of nodes) {
-      const content = textOf(node.message?.content);
-      if (!content && !node.message?.recipient) continue;
+      const content = textOf(node.content);
+      if (!content && !node.recipient) continue;
       messages.push({ id: str(node.id) || key, role: str(node.author?.role) || 'unknown', content, createdAt: iso(node.create_time), metadata: { recipient: node.recipient, channel: node.metadata?.channel, status: node.status } });
     }
   } else {
-    const source = raw.messages || raw.chat_messages || raw.turns || raw.items || [];
+    const source = raw.messages || raw.chat_messages || raw.turns || raw.items || raw.entries || [];
     if (Array.isArray(source)) source.forEach((m: any, i: number) => {
       if (!m || typeof m !== 'object' || Array.isArray(m)) return;
       const content = textOf(m.content ?? m.text ?? m.message ?? m);
-      if (content || m.role || m.author) messages.push({ id: str(m.id || m.uuid) || `${sourceId}-${i}`, role: str(m.role || m.author?.role || m.sender || 'unknown'), content, createdAt: iso(m.created_at || m.create_time || m.timestamp), metadata: m.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata) ? m.metadata : undefined });
+      const rawRole = str(m.role || m.author?.role || m.sender || 'unknown');
+      const role = platform === 'gemini' && rawRole === 'model' ? 'assistant' : rawRole;
+      if (content || m.role || m.author) messages.push({ id: str(m.id || m.uuid) || `${sourceId}-${i}`, role, content, createdAt: iso(m.created_at || m.create_time || m.timestamp), metadata: m.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata) ? m.metadata : undefined });
     });
   }
   if (!messages.length) return null;
@@ -91,7 +93,7 @@ function extractConversations(json: any): any[] {
   if (Array.isArray(json)) return json;
   if (!json || typeof json !== 'object') return [];
   for (const key of ['conversations','chats','threads','history']) if (Array.isArray(json[key])) return json[key];
-  if (json.mapping || json.messages || json.chat_messages || json.turns) return [json];
+  if (json.mapping || json.messages || json.chat_messages || json.turns || json.entries) return [json];
   return [];
 }
 const validPlatforms: Platform[] = ['chatgpt','claude','gemini','perplexity','grok','copilot','other'];

@@ -1,0 +1,21 @@
+{
+  "conversations": [
+    {
+      "id": "gemini-fixture-conversation-001",
+      "title": "Plan a Kyoto weekend",
+      "create_time": "2025-03-01T11:00:00Z",
+      "entries": [
+        {
+          "role": "user",
+          "text": "Suggest a relaxed two-day Kyoto itinerary.",
+          "create_time": "2025-03-01T11:00:05Z"
+        },
+        {
+          "role": "model",
+          "text": "Spend one day around Higashiyama and another near Arashiyama.",
+          "create_time": "2025-03-01T11:00:12Z"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+[
+  {
+    "id": "chatgpt-fixture-conversation-001",
+    "title": "Kyoto weekend itinerary",
+    "create_time": 1740839400,
+    "update_time": 1740839460,
+    "current_node": "assistant-node",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "message": null,
+        "parent": null,
+        "children": ["user-node"]
+      },
+      "user-node": {
+        "id": "user-node",
+        "message": {
+          "id": "chatgpt-message-user-001",
+          "author": { "role": "user", "name": null },
+          "create_time": 1740839405,
+          "content": { "content_type": "text", "parts": ["Plan a two-day trip to Kyoto."] },
+          "status": "finished_successfully",
+          "metadata": {},
+          "recipient": "all"
+        },
+        "parent": "root",
+        "children": ["assistant-node"]
+      },
+      "assistant-node": {
+        "id": "assistant-node",
+        "message": {
+          "id": "chatgpt-message-assistant-001",
+          "author": { "role": "assistant", "name": null },
+          "create_time": 1740839460,
+          "content": { "content_type": "text", "parts": ["Start with an early visit to Fushimi Inari, then explore Higashiyama."] },
+          "status": "finished_successfully",
+          "metadata": { "channel": "final" },
+          "recipient": "all"
+        },
+        "parent": "user-node",
+        "children": []
+      }
+    }
+  }
+]
