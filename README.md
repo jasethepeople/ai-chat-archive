@@ -2,6 +2,32 @@
 
 A local-first archive MVP for importing, searching, reading, and exporting AI conversations. It runs in a browser or inside the included Tauri 2 desktop shell. The archive is stored in IndexedDB on the current device; the app does not connect to provider accounts or upload conversation content.
 
+## Install the desktop app
+
+The latest test installers are produced by [GitHub Actions](https://github.com/jasethepeople/ai-chat-archive/actions/workflows/build-installers.yml). Open the newest successful **Build desktop installers** run and download the artifact matching your operating system from the run summary. Artifacts are retained for 14 days; this project does not yet publish versioned GitHub Releases, so download the installer promptly.
+
+### Windows
+
+Download the Windows artifact, then run either the `.msi` installer or the `-setup.exe` installer and follow its prompts. Windows 10 version 1803 and newer, and Windows 11, include the Microsoft Edge WebView2 Runtime used by the app. These CI builds are unsigned, so Windows SmartScreen may show a warning. Only continue if you trust the source and expect this warning for an unsigned test build.
+
+### macOS
+
+Download the macOS universal `.dmg`, open it, and drag **Echoes** into **Applications**. The build supports both Apple Silicon and Intel Macs. The current CI build is not signed or notarized, so macOS Gatekeeper may block it or display an unidentified-developer warning. Do not bypass that warning unless you trust this build; signed and notarized distribution is not configured yet.
+
+### Linux
+
+Download the Linux artifact and choose the package for your distribution:
+
+- Debian or Ubuntu: install the `.deb` file, for example with `sudo apt install ./<downloaded-file>.deb`.
+- Fedora or another RPM-based distribution: install the `.rpm` file with `sudo dnf install ./<downloaded-file>.rpm`.
+- AppImage: make it executable with `chmod +x <downloaded-file>.AppImage`, then launch it with `./<downloaded-file>.AppImage`.
+
+The app requires a compatible WebKitGTK 4.1 runtime on Linux. If a package manager reports missing dependencies, install the requested packages or try the distribution-native `.deb`/`.rpm` package.
+
+### Before importing conversations
+
+Echoes keeps its archive in local app/browser storage and does not sync it to an account or cloud. Use **Backup** or **Export archive** regularly and store the JSON backup somewhere safe. Clearing app data or removing the application can put local conversations at risk. Automatic sync and encrypted backups are not implemented yet.
+
 ## Run locally
 
 ```bash
