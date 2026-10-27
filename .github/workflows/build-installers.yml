@@ -115,6 +115,18 @@ jobs:
               ;;
           esac
 
+      - name: Archive macOS app bundle for release
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path=$(find src-tauri/target -type d -path '*/release/bundle/macos/*.app' -print -quit)
+          if [[ -z "$app_path" ]]; then
+            echo "::error::Missing macOS .app bundle to archive"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "${app_path}.zip"
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -122,3 +134,74 @@ jobs:
           path: src-tauri/target/**/release/bundle/**/*
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Create GitHub Release draft
+    needs: build
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Download platform installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: echoes-*
+          path: release-artifacts
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          collect_assets() {
+            local label="$1"
+            local pattern="$2"
+            local count=0
+            local asset
+            local filename
+
+            while IFS= read -r -d '' asset; do
+              filename=$(basename "$asset")
+              if [[ -e "release-assets/$filename" ]]; then
+                echo "::error::Duplicate release asset filename: $filename"
+                exit 1
+              fi
+              cp -- "$asset" "release-assets/$filename"
+              count=$((count + 1))
+            done < <(find release-artifacts -type f -iname "$pattern" -print0)
+
+            if (( count == 0 )); then
+              echo "::error::No $label assets found matching $pattern"
+              exit 1
+            fi
+            echo "Collected $count $label asset(s)."
+          }
+
+          collect_assets "Windows MSI" '*.msi'
+          collect_assets "Windows NSIS setup EXE" '*-setup.exe'
+          collect_assets "macOS DMG" '*.dmg'
+          collect_assets "macOS app bundle ZIP" '*.app.zip'
+          collect_assets "Linux DEB" '*.deb'
+          collect_assets "Linux RPM" '*.rpm'
+          collect_assets "Linux AppImage" '*.appimage'
+
+          echo "Release assets ready:"
+          find release-assets -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "Echoes $GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES_DRAFT.md \
+            --draft \
+            release-assets/*
